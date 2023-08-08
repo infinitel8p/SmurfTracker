@@ -72,22 +72,20 @@ void SmurfTracker::DisplayPlayerIDs()
 	}
 
 	// Get the array of players
+	//TODO: GetPRIs() only if in online game
+	//TODO: Toggle Function when scoreboard is open
 	ArrayWrapper<PriWrapper> players = gameWrapper->GetGameEventAsServer().GetPRIs();
 
 	// Iterate through the players
-	for (int i = 0; i < players.Count(); i++) {
-		PriWrapper player = players.Get(i);
-		if (player.IsNull()) continue;
+	for (int i = 0; i < players.Count(); i++) 
+	{
+		PriWrapper playerWrapper = players.Get(i);
+		if (playerWrapper.IsNull()) continue;
 
-		// Get the player's name
-		std::string playerName = player.GetPlayerName().ToString();
-		
-		// Get the player's unique ID
-		UniqueIDWrapper uniqueID = player.GetUniqueIdWrapper();
-		std::string playerID = uniqueID.GetIdString(); // Assuming GetIdString() returns the ID as a string
+		UniqueIDWrapper uniqueID = playerWrapper.GetUniqueIdWrapper();
 
 		// Log the player's name and ID to the console
-		LOG("Player name: " + playerName + " | ID: " + playerID);
+		LOG("Player name: " + playerWrapper.GetPlayerName().ToString() + " | ID: " + uniqueID.GetIdString());
 
 		// TODO: Determine the position to draw the ID
 		// TODO: Use the correct method to draw the string on the canvas
