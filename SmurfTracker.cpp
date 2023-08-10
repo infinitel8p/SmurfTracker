@@ -21,6 +21,26 @@ void SmurfTracker::onLoad()
 		DisplayPlayerIDs();
 		}, "", PERMISSION_ALL);
 
+	// Hook into the StartRound event to display player IDs at the start of every kickoff
+	gameWrapper->HookEvent("Function GameEvent_Soccar_TA.Active.StartRound", [this](std::string eventName) {
+		cvarManager->executeCommand("DisplayPlayerIDs");
+		});
+
+	// Hook into the BeginState event to display player IDs at the start of a kickoff countdown or beginning/reset of freeplay
+	gameWrapper->HookEvent("Function GameEvent_Soccar_TA.Countdown.BeginState", [this](std::string eventName) {
+		cvarManager->executeCommand("DisplayPlayerIDs");
+		});
+
+	// Hook into the OnOpenScoreboard event to display player IDs when the scoreboard is opened
+	gameWrapper->HookEvent("Function TAGame.GFxData_GameEvent_TA.OnOpenScoreboard", [this](std::string eventName) {
+		cvarManager->executeCommand("DisplayPlayerIDs");
+		});
+
+	// Hook into the OnCloseScoreboard event to log a message when the scoreboard is closed
+	gameWrapper->HookEvent("Function TAGame.GFxData_GameEvent_TA.OnCloseScoreboard", [this](std::string eventName) {
+		LOG("Scoreboard closed!");
+		});
+
 	// !! Enable debug logging by setting DEBUG_LOG = true in logging.h !!
 	//DEBUGLOG("SmurfTracker debug mode enabled");
 
@@ -71,21 +91,57 @@ void SmurfTracker::DisplayPlayerIDs()
 		return;
 	}
 
+	if (!gameWrapper->IsInOnlineGame() && !gameWrapper->IsInFreeplay() || gameWrapper->IsInReplay()) {
+		LOG("Not in an online game or freeplay!");
+		return;
+	}
+
+	ServerWrapper sw = NULL;
+	if (gameWrapper->IsInFreeplay()) {
+		sw = gameWrapper->GetGameEventAsServer();
+	}
+	else {
+		sw = gameWrapper->GetOnlineGame();
+	}
+
+	if (sw.IsNull() || sw.GetbMatchEnded()) {
+		LOG("Invalid game state or match ended!");
+		return;
+	}
+
 	// Get the array of players
-	//TODO: GetPRIs() only if in online game
 	//TODO: Toggle Function when scoreboard is open
-	ArrayWrapper<PriWrapper> players = gameWrapper->GetGameEventAsServer().GetPRIs();
+	ArrayWrapper<PriWrapper> players = sw.GetPRIs();
 
 	// Iterate through the players
-	for (int i = 0; i < players.Count(); i++) 
+	for (size_t i = 0; i < players.Count(); i++)
 	{
 		PriWrapper playerWrapper = players.Get(i);
 		if (playerWrapper.IsNull()) continue;
 
 		UniqueIDWrapper uniqueID = playerWrapper.GetUniqueIdWrapper();
+		std::string playerName = playerWrapper.GetPlayerName().ToString();
+		std::string uniqueIDString = uniqueID.GetIdString();
 
 		// Log the player's name and ID to the console
-		LOG("Player name: " + playerWrapper.GetPlayerName().ToString() + " | ID: " + uniqueID.GetIdString());
+		LOG("Player name: " + playerName + " | ID: " + uniqueIDString);
+
+		// Check the platform in the unique ID and log the appropriate request URL
+		if (uniqueIDString.find("Epic") != std::string::npos) {
+			LOG("Request: https://rocketleague.tracker.network/rocket-league/profile/epic/" + playerName);
+		}
+		else if (uniqueIDString.find("PS4") != std::string::npos) {
+			LOG("Request: https://rocketleague.tracker.network/rocket-league/profile/psn/" + playerName);
+		}
+		else if (uniqueIDString.find("Switch") != std::string::npos) {
+			LOG("Request: https://rocketleague.tracker.network/rocket-league/profile/switch/" + playerName);
+		}
+
+		// https://rocketleague.tracker.network/rocket-league/profile/steam/76561198138690072/overview ????-steam|uniqueID
+		// https://rocketleague.tracker.network/rocket-league/profile/xbl/RocketLeague893/overview ????-xbl|xbl-username
+		// https://rocketleague.tracker.network/rocket-league/profile/epic/test/overview Epic-epic|epic-username
+		// https://rocketleague.tracker.network/rocket-league/profile/psn/RocketLeagueNA/overview PS4-psn|psn-username
+		// https://rocketleague.tracker.network/rocket-league/profile/switch/test/overview Switch-switch|switch-username
 
 		// TODO: Determine the position to draw the ID
 		// TODO: Use the correct method to draw the string on the canvas
