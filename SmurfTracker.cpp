@@ -1,6 +1,8 @@
 #include "pch.h"
 #include "SmurfTracker.h"
 #include <fstream>
+#include <ctime>
+#include <iomanip>
 
 BAKKESMOD_PLUGIN(SmurfTracker, "Identify Smurfs.", plugin_version, PLUGINTYPE_FREEPLAY)
 
@@ -13,6 +15,14 @@ struct PlayerDetails {
 	std::string uniqueID;
 	int playerIndex = 0;
 };
+
+std::string getCurrentTime() {
+	std::time_t t = std::time(nullptr);
+	std::tm tm = *std::localtime(&t);
+	std::stringstream ss;
+	ss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
+	return ss.str();
+}
 
 void SmurfTracker::onLoad()
 {
@@ -78,19 +88,19 @@ void SmurfTracker::HTTPRequest(const std::string& url)
 	// Create a shared pointer to manage the log file object
 	auto logFile = std::make_shared<std::ofstream>("SmurfTracker.log", std::ios::app);
 
-	*logFile << "Start of request" << std::endl;
+	*logFile << "[" << getCurrentTime() << "] Start of request" << std::endl;
 
 	// Define the callback function, capturing logFile by value
 	auto callback = [logFile](int code, std::string result) {
 		LOG("Body result{}", result);
-		*logFile << "Response: " << result << std::endl;
+		*logFile << "[" << getCurrentTime() << "] Response: " << result << std::endl;
 	};
 
 	// Send the request using BakkesMod's HttpWrapper
 	LOG("sending body request");
 	HttpWrapper::SendCurlRequest(req, callback);
 
-	*logFile << "End of request" << std::endl;
+	*logFile << "[" << getCurrentTime() << "] End of request" << std::endl;
 }
 
 void SmurfTracker::DisplayPlayerIDs()
@@ -177,7 +187,7 @@ void SmurfTracker::DisplayPlayerIDs()
 			" | ID: " + details.uniqueID +
 			" | PlayerIndex: " + std::to_string(details.playerIndex);
 		LOG(logMessage);
-		logFile << logMessage << std::endl;
+		logFile << "\n[" << getCurrentTime() << "] " << logMessage << std::endl;
 
 		// Check the platform in the unique ID and log the appropriate request URL
 		if (uniqueIDString.find("Epic") != std::string::npos) {
@@ -199,6 +209,18 @@ void SmurfTracker::DisplayPlayerIDs()
 
 		// TODO: Determine the position to draw the ID
 		// TODO: Use the correct method to draw the string on the canvas
+
+		std::vector<CareerStatsWrapper::StatValue> statValues = CareerStatsWrapper::GetStatValues();
+		for (const auto& statValue : statValues) {
+			if (statValue.stat_name == "Win") {
+				std::string logMessage = getCurrentTime() + " | Stat Name: " + statValue.stat_name +
+					" | Private: " + std::to_string(statValue.private_) +
+					" | Unranked: " + std::to_string(statValue.unranked) +
+					" | Ranked: " + std::to_string(statValue.ranked);
+				logFile << "\n[" << getCurrentTime() << "] " << logMessage << std::endl;
+				break; // Exit the loop once the "Win" stat is found
+			}
+		}
 
 		HTTPRequest("https://jsonplaceholder.typicode.com/users");
 	}
