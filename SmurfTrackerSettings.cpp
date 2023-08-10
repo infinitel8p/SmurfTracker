@@ -13,6 +13,15 @@ void SmurfTracker::RenderSettings() {
         ImGui::SetTooltip("Test");
     }
 
+    if (ImGui::Button("Check HTTP Request")) {
+        gameWrapper->Execute([this](GameWrapper* gw) {
+            cvarManager->executeCommand("HTTPRequest https:||jsonplaceholder.typicode.com|posts");
+            });
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Send a HTTP Request to jsonplaceholder.typicode.com/posts and log results");
+    }
+
     CVarWrapper enableCvar = cvarManager->getCvar("SmurfTracker_enabled");
     if (!enableCvar) { return; }
     bool enabled = enableCvar.getBoolValue();

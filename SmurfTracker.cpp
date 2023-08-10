@@ -1,16 +1,24 @@
 #include "pch.h"
 #include "SmurfTracker.h"
-
+#include <fstream>
 
 BAKKESMOD_PLUGIN(SmurfTracker, "Identify Smurfs.", plugin_version, PLUGINTYPE_FREEPLAY)
 
 std::shared_ptr<CVarManagerWrapper> _globalCvarManager;
 bool smurfTrackerEnabled = false;
 
+struct PlayerDetails {
+	std::string playerName;
+	std::string platform;
+	std::string uniqueID;
+	int playerIndex = 0;
+};
+
 void SmurfTracker::onLoad()
 {
 	_globalCvarManager = cvarManager;
 	LOG("SmurfTracker loaded!");
+	DEBUGLOG("SmurfTracker debug mode enabled"); // logging.h DEBUG_LOG = true;
 	
 	cvarManager->registerCvar("SmurfTracker_enabled", "0", "Enable SmurfTracker Plugin", true, true, 0, true, 1)
 		.addOnValueChanged([this](std::string oldValue, CVarWrapper cvar) {
@@ -19,6 +27,19 @@ void SmurfTracker::onLoad()
 
 	cvarManager->registerNotifier("DisplayPlayerIDs", [this](std::vector<std::string> args) {
 		DisplayPlayerIDs();
+		}, "", PERMISSION_ALL);
+
+	// Updated the HTTPRequest notifier to always expect a URL argument
+	cvarManager->registerNotifier("HTTPRequest", [this](std::vector<std::string> args) {
+		if (!args.empty()) {
+			std::string url = args[1];
+			// Replace the custom delimiter with the correct one
+			std::replace(url.begin(), url.end(), '|', '/');
+			HTTPRequest(url);
+		}
+		else {
+			LOG("No URL provided for HTTPRequest!");
+		}
 		}, "", PERMISSION_ALL);
 
 	// Hook into the StartRound event to display player IDs at the start of every kickoff
@@ -40,48 +61,36 @@ void SmurfTracker::onLoad()
 	gameWrapper->HookEvent("Function TAGame.GFxData_GameEvent_TA.OnCloseScoreboard", [this](std::string eventName) {
 		LOG("Scoreboard closed!");
 		});
-
-	// !! Enable debug logging by setting DEBUG_LOG = true in logging.h !!
-	//DEBUGLOG("SmurfTracker debug mode enabled");
-
-	// LOG and DEBUGLOG use fmt format strings https://fmt.dev/latest/index.html
-	//DEBUGLOG("1 = {}, 2 = {}, pi = {}, false != {}", "one", 2, 3.14, true);
-
-	//cvarManager->registerNotifier("my_aweseome_notifier", [&](std::vector<std::string> args) {
-	//	LOG("Hello notifier!");
-	//}, "", 0);
-	// 
-	//auto cvar = cvarManager->registerCvar("template_cvar", "hello-cvar", "just a example of a cvar");
-	//auto cvar2 = cvarManager->registerCvar("template_cvar2", "0", "just a example of a cvar with more settings", true, true, -10, true, 10 );
-
-	//cvar.addOnValueChanged([this](std::string cvarName, CVarWrapper newCvar) {
-	//	LOG("the cvar with name: {} changed", cvarName);
-	//	LOG("the new value is: {}", newCvar.getStringValue());
-	//});
-
-	//cvar2.addOnValueChanged(std::bind(&SmurfTracker::YourPluginMethod, this, _1, _2));
-
-	// enabled decleared in the header
-	//enabled = std::make_shared<bool>(false);
-	//cvarManager->registerCvar("TEMPLATE_Enabled", "0", "Enable the TEMPLATE plugin", true, true, 0, true, 1).bindTo(enabled);
-
-	//cvarManager->registerNotifier("NOTIFIER", [this](std::vector<std::string> params){FUNCTION();}, "DESCRIPTION", PERMISSION_ALL);
-	//cvarManager->registerCvar("CVAR", "DEFAULTVALUE", "DESCRIPTION", true, true, MINVAL, true, MAXVAL);//.bindTo(CVARVARIABLE);
-	//gameWrapper->HookEvent("FUNCTIONNAME", std::bind(&TEMPLATE::FUNCTION, this));
-	//gameWrapper->HookEventWithCallerPost<ActorWrapper>("FUNCTIONNAME", std::bind(&SmurfTracker::FUNCTION, this, _1, _2, _3));
-	//gameWrapper->RegisterDrawable(bind(&TEMPLATE::Render, this, std::placeholders::_1));
-
-
-	//gameWrapper->HookEvent("Function TAGame.Ball_TA.Explode", [this](std::string eventName) {
-	//	LOG("Your hook got called and the ball went POOF");
-	//});
-	// You could also use std::bind here
-	//gameWrapper->HookEvent("Function TAGame.Ball_TA.Explode", std::bind(&SmurfTracker::YourPluginMethod, this);
 }
 
 void SmurfTracker::onUnload()
 {
 	LOG("SmurfTracker unloaded!");
+}
+
+void SmurfTracker::HTTPRequest(const std::string& url)
+{
+	// Create a CurlRequest
+	CurlRequest req;
+	req.url = url;
+	req.body = "testing with body";
+
+	// Create a shared pointer to manage the log file object
+	auto logFile = std::make_shared<std::ofstream>("SmurfTracker.log", std::ios::app);
+
+	*logFile << "Start of request" << std::endl;
+
+	// Define the callback function, capturing logFile by value
+	auto callback = [logFile](int code, std::string result) {
+		LOG("Body result{}", result);
+		*logFile << "Response: " << result << std::endl;
+	};
+
+	// Send the request using BakkesMod's HttpWrapper
+	LOG("sending body request");
+	HttpWrapper::SendCurlRequest(req, callback);
+
+	*logFile << "End of request" << std::endl;
 }
 
 void SmurfTracker::DisplayPlayerIDs()
@@ -110,8 +119,12 @@ void SmurfTracker::DisplayPlayerIDs()
 	}
 
 	// Get the array of players
-	//TODO: Toggle Function when scoreboard is open
 	ArrayWrapper<PriWrapper> players = sw.GetPRIs();
+
+	// Open the log file in append mode (Location is Epic Games\rocketleague\Binaries\Win64\SmurfTracker.log)
+	std::ofstream logFile("SmurfTracker.log", std::ios::app);
+
+	std::map<std::string, PlayerDetails> uniqueIDMap;
 
 	// Iterate through the players
 	for (size_t i = 0; i < players.Count(); i++)
@@ -120,21 +133,61 @@ void SmurfTracker::DisplayPlayerIDs()
 		if (playerWrapper.IsNull()) continue;
 
 		UniqueIDWrapper uniqueID = playerWrapper.GetUniqueIdWrapper();
-		std::string playerName = playerWrapper.GetPlayerName().ToString();
 		std::string uniqueIDString = uniqueID.GetIdString();
 
-		// Log the player's name and ID to the console
-		LOG("Player name: " + playerName + " | ID: " + uniqueIDString);
+		// Find separators
+		size_t firstSeparator = uniqueIDString.find('|');
+		size_t secondSeparator = uniqueIDString.find('|', firstSeparator + 1);
+
+		// Check for valid separators
+		if (firstSeparator == std::string::npos || secondSeparator == std::string::npos || firstSeparator >= secondSeparator) {
+			LOG("Invalid unique ID format: " + uniqueIDString);
+			continue; // Skip this player if the unique ID format is not as expected
+		}
+
+		std::string platform = uniqueIDString.substr(0, firstSeparator);
+		std::string uniqueIDPart = uniqueIDString.substr(firstSeparator + 1, secondSeparator - firstSeparator - 1);
+		int playerIndex = static_cast<int>(std::stoi(uniqueIDString.substr(secondSeparator + 1)));
+
+		PlayerDetails details;
+
+		// If this is a main player, store the details
+		if (playerIndex == 0) {
+			details = { playerWrapper.GetPlayerName().ToString(), platform, uniqueIDPart, playerIndex };
+			uniqueIDMap[uniqueIDPart] = details;
+		}
+		// If this is a splitscreen player, retrieve the main player's details
+		else {
+			// Check if the main player's details are in the map
+			if (uniqueIDMap.find(uniqueIDPart) != uniqueIDMap.end()) {
+				details = uniqueIDMap[uniqueIDPart];
+				// Log the splitscreen relationship
+				LOG("Splitscreen player of main player at index " + std::to_string(details.playerIndex));
+				continue;
+			}
+			else {
+				LOG("Main player's details not found for splitscreen player: " + uniqueIDString);
+				continue;
+			}
+		}
+
+		// Log the details
+		std::string logMessage = "Player name: " + details.playerName +
+			" | Platform: " + details.platform +
+			" | ID: " + details.uniqueID +
+			" | PlayerIndex: " + std::to_string(details.playerIndex);
+		LOG(logMessage);
+		logFile << logMessage << std::endl;
 
 		// Check the platform in the unique ID and log the appropriate request URL
 		if (uniqueIDString.find("Epic") != std::string::npos) {
-			LOG("Request: https://rocketleague.tracker.network/rocket-league/profile/epic/" + playerName);
+			LOG("Request: https://rocketleague.tracker.network/rocket-league/profile/epic/" + details.playerName);
 		}
 		else if (uniqueIDString.find("PS4") != std::string::npos) {
-			LOG("Request: https://rocketleague.tracker.network/rocket-league/profile/psn/" + playerName);
+			LOG("Request: https://rocketleague.tracker.network/rocket-league/profile/psn/" + details.playerName);
 		}
 		else if (uniqueIDString.find("Switch") != std::string::npos) {
-			LOG("Request: https://rocketleague.tracker.network/rocket-league/profile/switch/" + playerName);
+			LOG("Request: https://rocketleague.tracker.network/rocket-league/profile/switch/" + details.playerName);
 		}
 
 		// https://rocketleague.tracker.network/rocket-league/profile/steam/76561198138690072/overview ????-steam|uniqueID
@@ -142,8 +195,14 @@ void SmurfTracker::DisplayPlayerIDs()
 		// https://rocketleague.tracker.network/rocket-league/profile/epic/test/overview Epic-epic|epic-username
 		// https://rocketleague.tracker.network/rocket-league/profile/psn/RocketLeagueNA/overview PS4-psn|psn-username
 		// https://rocketleague.tracker.network/rocket-league/profile/switch/test/overview Switch-switch|switch-username
+		// uniqueID = Platform|Userid|Splitscreen/PlayerIndex
 
 		// TODO: Determine the position to draw the ID
 		// TODO: Use the correct method to draw the string on the canvas
+
+		HTTPRequest("https://jsonplaceholder.typicode.com/users");
 	}
+
+	// Close the log file
+	logFile.close();
 }
