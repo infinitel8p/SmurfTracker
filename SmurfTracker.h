@@ -21,6 +21,7 @@ class SmurfTracker: public BakkesMod::Plugin::BakkesModPlugin
 	void onUnload() override;
 	void DisplayPlayerIDs();
 	void HTTPRequest(const std::string& url);
+	void Render(CanvasWrapper canvas);
 
 
 public:

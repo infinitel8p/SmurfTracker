@@ -14,6 +14,7 @@ struct PlayerDetails {
 	std::string platform;
 	std::string uniqueID;
 	int playerIndex = 0;
+	int wins = 0;	
 };
 
 std::string getCurrentTime() {
@@ -26,6 +27,11 @@ std::string getCurrentTime() {
 
 void SmurfTracker::onLoad()
 {
+	// Register the render function to be called each frame
+	gameWrapper->RegisterDrawable([this](CanvasWrapper canvas) {
+		Render(canvas);
+		});
+
 	_globalCvarManager = cvarManager;
 	LOG("SmurfTracker loaded!");
 	DEBUGLOG("SmurfTracker debug mode enabled"); // logging.h DEBUG_LOG = true;
@@ -101,6 +107,31 @@ void SmurfTracker::HTTPRequest(const std::string& url)
 	HttpWrapper::SendCurlRequest(req, callback);
 
 	*logFile << "[" << getCurrentTime() << "] End of request" << std::endl;
+}
+
+// Function to render text next to the scoreboard
+void SmurfTracker::Render(CanvasWrapper canvas)
+{
+	// defines colors in RGBA 0-255
+	LinearColor colors;
+	colors.R = 255;
+	colors.G = 255;
+	colors.B = 255;
+	colors.A = 255;
+	canvas.SetColor(colors);
+
+	// Get the screen size
+	int screenWidth = canvas.GetSize().X;
+	int screenHeight = canvas.GetSize().Y;
+
+	// Calculate the position next to the scoreboard
+	Vector2 scoreboardPosition(screenWidth - 500, screenHeight / 2);
+
+	std::string TextToDisplay = "SmurfTracker";
+	
+	// Draw the text
+	canvas.SetPosition(scoreboardPosition);
+	canvas.DrawString(TextToDisplay);
 }
 
 void SmurfTracker::DisplayPlayerIDs()
@@ -204,7 +235,7 @@ void SmurfTracker::DisplayPlayerIDs()
 		// https://rocketleague.tracker.network/rocket-league/profile/xbl/RocketLeague893/overview ????-xbl|xbl-username
 		// https://rocketleague.tracker.network/rocket-league/profile/epic/test/overview Epic-epic|epic-username
 		// https://rocketleague.tracker.network/rocket-league/profile/psn/RocketLeagueNA/overview PS4-psn|psn-username
-		// https://rocketleague.tracker.network/rocket-league/profile/switch/test/overview Switch-switch|switch-username
+		// https://rocketleague.tracker.network/rocket-league/profile/switch/test/overview Switch-switch|switch-usernamefpla
 		// uniqueID = Platform|Userid|Splitscreen/PlayerIndex
 
 		// TODO: Determine the position to draw the ID
