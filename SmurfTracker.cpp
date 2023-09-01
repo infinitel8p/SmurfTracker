@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "SmurfTracker.h"
+#include <set>
 
 BAKKESMOD_PLUGIN(SmurfTracker, "Identify Smurfs.", plugin_version, PLUGINTYPE_FREEPLAY)
 
@@ -42,6 +43,11 @@ void SmurfTracker::onLoad()
 	cvarManager->registerCvar("SmurfTracker_enabled", "0", "Enable SmurfTracker Plugin", true, true, 0, true, 1)
 		.addOnValueChanged([this](std::string oldValue, CVarWrapper cvar) {
 		smurfTrackerEnabled = cvar.getBoolValue();
+	});
+
+	cvarManager->registerCvar("SmurfTracker_mode", "0", "SmurfTracker selected mode", true, true, 0, true, 2)
+		.addOnValueChanged([this](std::string oldValue, CVarWrapper cvar) {
+		currentItem = cvar.getIntValue();
 	});
 
 	cvarManager->registerNotifier("DisplayPlayerIDs", [this](std::vector<std::string> args) {
@@ -166,11 +172,13 @@ void SmurfTracker::InitializeCurrentPlayers()
 
 		std::string uniqueIDPart = uniqueIDString.substr(firstSeparator + 1, secondSeparator - firstSeparator - 1);
 		int playerIndex = static_cast<int>(std::stoi(uniqueIDString.substr(secondSeparator + 1)));
+		std::string platform = uniqueIDString.substr(0, firstSeparator);
+		details.platform = platform;
 
 		LogF("Player name: " + details.playerName +
 			" | Platform: " + details.platform +
-			" | ID: " + details.uniqueID +
-			" | PlayerIndex: " + std::to_string(details.playerIndex));
+			" | PlayerIndex: " + std::to_string(details.playerIndex) +
+			" | ID: " + details.uniqueID);
 
 		// If this is a main player, store the details
 		if (playerIndex == 0) {
@@ -203,8 +211,6 @@ void SmurfTracker::ClearCurrentPlayers()
 }
 
 void SmurfTracker::UpdatePlayerList() {
-	//TODO: Check if all players are still connected and/or if new players have joined
-
 	ServerWrapper sw = NULL;
 	if (gameWrapper->IsInFreeplay()) {
 		sw = gameWrapper->GetGameEventAsServer();
@@ -218,9 +224,41 @@ void SmurfTracker::UpdatePlayerList() {
 		return;
 	}
 
+	if (currentPlayers.size() < 1) {
+		InitializeCurrentPlayers();
+		return;
+	}
+
+	if (currentPlayers.size() < sw.GetPRIs().Count()) {
+		InitializeCurrentPlayers();
+		return;
+	}
+
 	// Get the array of players
 	ArrayWrapper<PriWrapper> players = sw.GetPRIs();
 
+	// perform sanity check for player count and expected player count
+	std::set<std::string> playerNamesSet(blueTeam.begin(), blueTeam.end());
+	playerNamesSet.insert(orangeTeam.begin(), orangeTeam.end());
+
+	bool allPlayersFound = true;
+	for (size_t i = 0; i < players.Count(); ++i) {
+		PriWrapper priw = players.Get(i);
+		if (priw.IsNull()) continue;
+
+		std::string playerName = priw.GetPlayerName().ToString();
+		if (playerNamesSet.find(playerName) == playerNamesSet.end()) {
+			allPlayersFound = false;
+			break;
+		}
+	}
+	if (!allPlayersFound) {
+		LogF("Connected Players:" + std::to_string(currentPlayers.size()) + "/" + std::to_string(players.Count()) + " (Not all players found!)");
+		InitializeCurrentPlayers();
+		return;
+	}
+
+	// Update the current scores of the players
 	for (PlayerDetails& player : currentPlayers) {
 		for (size_t i = 0; i < players.Count(); ++i) {
 			PriWrapper priw = players.Get(i);
@@ -235,7 +273,7 @@ void SmurfTracker::UpdatePlayerList() {
 		}
 	}
 
-	// Sort the players
+	// Sort the players by team and score	
 	std::sort(currentPlayers.begin(), currentPlayers.end(), [](const PlayerDetails& a, const PlayerDetails& b) {
 		if (a.team == b.team) {
 			return a.currentScore > b.currentScore;  // Sort by currentScore within the same team
@@ -295,27 +333,9 @@ void SmurfTracker::Render(CanvasWrapper canvas)
 		return;
 	}
 
-	if (currentPlayers.size() < 1) {
-		InitializeCurrentPlayers();
-		return;
-	}
-
-	ServerWrapper sw = NULL;
-	if (gameWrapper->IsInFreeplay()) {
-		sw = gameWrapper->GetGameEventAsServer();
-	}
-	else {
-		sw = gameWrapper->GetOnlineGame();
-	}
-	if (sw.IsNull() || sw.GetbMatchEnded()) {
-		return;
-	}
-
-	if (currentPlayers.size() < sw.GetPRIs().Count()) {
-		LogF("Not all players found! " + std::to_string(currentPlayers.size()) + "in Array vs.: " + std::to_string(sw.GetPRIs().Count()));
-		InitializeCurrentPlayers();
-		return;
-	}
+	// selected mode to display
+	int currentMode = cvarManager->getCvar("SmurfTracker_mode").getIntValue();
+	const char* items[] = { "Test", "MMR", "Wins" }; // Modes
 
 	// Get the screen size
 	int screenWidth = canvas.GetSize().X;
@@ -324,7 +344,8 @@ void SmurfTracker::Render(CanvasWrapper canvas)
 	// Calculate the position next to the scoreboard
 	Vector2 scoreboardPosition(screenWidth - 500, screenHeight / 2);
 
-	std::string TextToDisplay = "Connected Players:" + std::to_string(currentPlayers.size()) + "/" + std::to_string(sw.GetPRIs().Count());
+	std::string TextToDisplay = "Connected Players:" + std::to_string(currentPlayers.size()) + "Mode: " + items[currentMode];
+
 	LinearColor white;
 	white.R = 255;
 	white.G = 255;

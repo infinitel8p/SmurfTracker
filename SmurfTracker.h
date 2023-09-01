@@ -42,6 +42,7 @@ class SmurfTracker : public BakkesMod::Plugin::BakkesModPlugin
 
 	bool isSBOpen;
 	bool smurfTrackerEnabled;
+	int currentItem; // displayed mode chosen by combo box
 	std::vector<PlayerDetails> currentPlayers;
 	std::ofstream logFile;
 	std::vector<std::string> blueTeam;
