@@ -337,68 +337,147 @@ void SmurfTracker::Render(CanvasWrapper canvas)
 	int currentMode = cvarManager->getCvar("SmurfTracker_mode").getIntValue();
 	const char* items[] = { "Test", "MMR", "Wins" }; // Modes
 
-	// Get the screen size
-	int screenWidth = canvas.GetSize().X;
-	int screenHeight = canvas.GetSize().Y;
+	if (currentMode == 0 || currentMode==2) {
+		// if mode is test or wins, display the scoreboard
+		// Get the screen size
+		int screenWidth = canvas.GetSize().X;
+		int screenHeight = canvas.GetSize().Y;
 
-	// Calculate the position next to the scoreboard
-	Vector2 scoreboardPosition(screenWidth - 500, screenHeight / 2);
+		// Calculate the position next to the scoreboard
+		Vector2 scoreboardPosition(screenWidth - screenWidth / 4, screenHeight / 2 - screenHeight / 10);
 
-	std::string TextToDisplay = "Connected Players:" + std::to_string(currentPlayers.size()) + "Mode: " + items[currentMode];
+		std::string TextToDisplay = "Connected Players:" + std::to_string(currentPlayers.size()) + " Mode: " + items[currentMode];
 
-	LinearColor white;
-	white.R = 255;
-	white.G = 255;
-	white.B = 255;
-	white.A = 255;
-	canvas.SetColor(white);
-	canvas.SetPosition(scoreboardPosition);
-	canvas.DrawString(TextToDisplay);
-
-	// Initialize vertical offset for player names
-	int verticalOffset = 20;
-
-	// Update the vertical position for the next line
-	scoreboardPosition.Y += verticalOffset;
-
-	// Draw Blue Team
-	LinearColor blue;
-	blue.R = 0;
-	blue.G = 0;
-	blue.B = 255;
-	blue.A = 255;
-	canvas.SetColor(blue);
-	canvas.SetPosition(scoreboardPosition);
-	canvas.DrawString("Blue:");
-
-	// Update the vertical position for the next line
-	scoreboardPosition.Y += verticalOffset;
-	canvas.SetColor(white);
-
-	for (const auto& player : blueTeam) {
+		LinearColor white;
+		white.R = 255;
+		white.G = 255;
+		white.B = 255;
+		white.A = 255;
+		canvas.SetColor(white);
 		canvas.SetPosition(scoreboardPosition);
-		canvas.DrawString(player);
+		canvas.DrawString(TextToDisplay);
+
+		// Initialize vertical offset for player names
+		int verticalOffset = 20;
+
+		// Update the vertical position for the next line
 		scoreboardPosition.Y += verticalOffset;
+
+		// Draw Blue Team
+		LinearColor blue;
+		blue.R = 0;
+		blue.G = 0;
+		blue.B = 255;
+		blue.A = 255;
+		canvas.SetColor(blue);
+		canvas.SetPosition(scoreboardPosition);
+		canvas.DrawString("Blue:");
+
+		// Update the vertical position for the next line
+		scoreboardPosition.Y += verticalOffset;
+		canvas.SetColor(white);
+
+		for (const auto& player : blueTeam) {
+			for (const auto& players : currentPlayers) {
+				if (player == players.playerName) {
+					LOG("");
+				}
+			}
+			canvas.SetPosition(scoreboardPosition);
+			canvas.DrawString(player);
+			scoreboardPosition.Y += verticalOffset;
+		}
+
+
+		// Draw Orange Team
+		LinearColor orange;
+		orange.R = 255;
+		orange.G = 165;
+		orange.B = 0;
+		orange.A = 255;
+		canvas.SetColor(orange);
+		canvas.SetPosition(scoreboardPosition);
+		canvas.DrawString("Orange:");
+
+		// Update the vertical position for the next line
+		scoreboardPosition.Y += verticalOffset;
+		canvas.SetColor(white);
+
+		for (const auto& player : orangeTeam) {
+			canvas.SetPosition(scoreboardPosition);
+			canvas.DrawString(player);
+			scoreboardPosition.Y += verticalOffset;
+		}
 	}
 
-	// Draw Orange Team
-	LinearColor orange;
-	orange.R = 255;
-	orange.G = 165;
-	orange.B = 0;
-	orange.A = 255;
-	canvas.SetColor(orange);
-	canvas.SetPosition(scoreboardPosition);
-	canvas.DrawString("Orange:");
+	if (currentMode == 1) {
+		// if mode is MMR, display the MMR of each player
+		// Get the screen size
+		int screenWidth = canvas.GetSize().X;
+		int screenHeight = canvas.GetSize().Y;
 
-	// Update the vertical position for the next line
-	scoreboardPosition.Y += verticalOffset;
-	canvas.SetColor(white);
+		// Calculate the position next to the scoreboard
+		Vector2 scoreboardPosition(screenWidth - screenWidth / 4, screenHeight / 2 - screenHeight / 10);
 
-	for (const auto& player : orangeTeam) {
+		std::string TextToDisplay = "Connected Players:" + std::to_string(currentPlayers.size()) + " Mode: " + items[currentMode];
+
+		LinearColor white;
+		white.R = 255;
+		white.G = 255;
+		white.B = 255;
+		white.A = 255;
+		canvas.SetColor(white);
 		canvas.SetPosition(scoreboardPosition);
-		canvas.DrawString(player);
+		canvas.DrawString(TextToDisplay);
+
+		// Initialize vertical offset for player names
+		int verticalOffset = 20;
+
+		// Update the vertical position for the next line
 		scoreboardPosition.Y += verticalOffset;
+
+		// Draw Blue Team
+		LinearColor blue;
+		blue.R = 0;
+		blue.G = 0;
+		blue.B = 255;
+		blue.A = 255;
+		canvas.SetColor(blue);
+		canvas.SetPosition(scoreboardPosition);
+		canvas.DrawString("Blue:");
+
+		// Update the vertical position for the next line
+		scoreboardPosition.Y += verticalOffset;
+		canvas.SetColor(white);
+
+		// playlist id 11
+		for (const auto& player : blueTeam) {
+			std::string playerNameWithMMR = player;
+			canvas.SetPosition(scoreboardPosition);
+			canvas.DrawString(playerNameWithMMR);
+			scoreboardPosition.Y += verticalOffset;
+		}
+
+
+		// Draw Orange Team
+		LinearColor orange;
+		orange.R = 255;
+		orange.G = 165;
+		orange.B = 0;
+		orange.A = 255;
+		canvas.SetColor(orange);
+		canvas.SetPosition(scoreboardPosition);
+		canvas.DrawString("Orange:");
+
+		// Update the vertical position for the next line
+		scoreboardPosition.Y += verticalOffset;
+		canvas.SetColor(white);
+
+		for (const auto& player : orangeTeam) {
+			canvas.SetPosition(scoreboardPosition);
+			canvas.DrawString(player);
+			scoreboardPosition.Y += verticalOffset;
+		}
 	}
 }
 
