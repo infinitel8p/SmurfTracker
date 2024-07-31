@@ -1,6 +1,8 @@
 #include "pch.h"
 #include "SmurfTracker.h"
+#include "json.hpp"
 #include <set>
+#include "url_encode.h"
 
 BAKKESMOD_PLUGIN(SmurfTracker, "Identify Smurfs.", plugin_version, PLUGINTYPE_FREEPLAY)
 
@@ -47,7 +49,12 @@ void SmurfTracker::onLoad()
 
 	cvarManager->registerCvar("SmurfTracker_mode", "0", "SmurfTracker selected mode", true, true, 0, true, 2)
 		.addOnValueChanged([this](std::string oldValue, CVarWrapper cvar) {
-		currentItem = cvar.getIntValue();
+		selectedMode = cvar.getIntValue();
+	});
+
+	cvarManager->registerCvar("SmurfTracker_ip", "127.0.0.1", "IP Address for SmurfTracker endpoint", true, true, 0, true, 15)
+		.addOnValueChanged([this](std::string oldValue, CVarWrapper cvar) {
+		ipAddress = cvar.getStringValue();
 	});
 
 	cvarManager->registerNotifier("DisplayPlayerIDs", [this](std::vector<std::string> args) {
@@ -58,17 +65,8 @@ void SmurfTracker::onLoad()
 		InitializeCurrentPlayers();
 		}, "", PERMISSION_ALL);
 
-	// Updated the HTTPRequest notifier to always expect a URL argument
-	cvarManager->registerNotifier("HTTPRequest", [this](std::vector<std::string> args) {
-		if (!args.empty()) {
-			std::string url = args[1];
-			// Replace the custom delimiter with the correct one
-			std::replace(url.begin(), url.end(), '|', '/');
-			HTTPRequest(url);
-		}
-		else {
-			LOG("No URL provided for HTTPRequest!");
-		}
+	cvarManager->registerNotifier("TestHTTPRequest", [this](std::vector<std::string> args) {
+		HTTPRequest();
 		}, "", PERMISSION_ALL);
 
 	// Hook into the OnAllTeamsCreated event to log when all teams are created	
@@ -76,16 +74,6 @@ void SmurfTracker::onLoad()
 		LOG("Initialize Game Session");
 		cvarManager->executeCommand("InitializeCurrentPlayers");
 		});
-
-	// Hook into the StartRound event to display player IDs at the start of every kickoff
-	//gameWrapper->HookEvent("Function GameEvent_Soccar_TA.Active.StartRound", [this](std::string eventName) {
-	//	cvarManager->executeCommand("DisplayPlayerIDs");
-	//	});
-
-	// Hook into the BeginState event to display player IDs at the start of a kickoff countdown or beginning/reset of freeplay
-	//gameWrapper->HookEvent("Function GameEvent_Soccar_TA.Countdown.BeginState", [this](std::string eventName) {
-	//	cvarManager->executeCommand("DisplayPlayerIDs");
-	//	});
 
 	// Hook into the OnOpenScoreboard event to display player IDs when the scoreboard is opened
 	gameWrapper->HookEvent("Function TAGame.GFxData_GameEvent_TA.OnOpenScoreboard", [this](std::string eventName) {
@@ -152,13 +140,13 @@ void SmurfTracker::InitializeCurrentPlayers()
 		UniqueIDWrapper uniqueID = playerWrapper.GetUniqueIdWrapper();
 		std::string uniqueIDString = uniqueID.GetIdString();
 
-		// Extract player information (you can add more fields as needed)
+		// Extract player information
 		PlayerDetails details;
 		details.playerName = playerWrapper.GetPlayerName().ToString();
 		details.uniqueID = uniqueIDString;
 		details.playerIndex = static_cast<int>(i);  // Assuming i is the player index
-		details.wins = 0;  // TODO: Get wins from tracker network or other source
 		details.team = playerWrapper.GetTeamNum();  // 0 is blue, 1 is orange
+		details.wins = "Searching...";
 
 		// Find separators
 		size_t firstSeparator = uniqueIDString.find('|');
@@ -174,11 +162,6 @@ void SmurfTracker::InitializeCurrentPlayers()
 		int playerIndex = static_cast<int>(std::stoi(uniqueIDString.substr(secondSeparator + 1)));
 		std::string platform = uniqueIDString.substr(0, firstSeparator);
 		details.platform = platform;
-
-		LogF("Player name: " + details.playerName +
-			" | Platform: " + details.platform +
-			" | PlayerIndex: " + std::to_string(details.playerIndex) +
-			" | ID: " + details.uniqueID);
 
 		// If this is a main player, store the details
 		if (playerIndex == 0) {
@@ -202,6 +185,7 @@ void SmurfTracker::InitializeCurrentPlayers()
 		currentPlayers.push_back(details);
 	}
 
+	HTTPRequest();
 	UpdateTeamStrings();
 }
 
@@ -298,29 +282,78 @@ void SmurfTracker::UpdateTeamStrings() {
 	}
 }
 
-void SmurfTracker::HTTPRequest(const std::string& url)
+void SmurfTracker::HTTPRequest()
 {
-	// Create a CurlRequest
-	CurlRequest req;
-	req.url = url;
-	req.body = "testing with body";
+	ServerWrapper sw = NULL;
+	if (gameWrapper->IsInFreeplay()) {
+		sw = gameWrapper->GetGameEventAsServer();
+	}
+	else {
+		sw = gameWrapper->GetOnlineGame();
+	}
 
-	// Create a shared pointer to manage the log file object
-	auto logFile = std::make_shared<std::ofstream>("SmurfTracker.log", std::ios::app);
+	if (sw.IsNull() || sw.GetbMatchEnded()) {
+		LOG("Invalid game state or match ended!");
+		return;
+	}
 
-	*logFile << "[" << getCurrentTime() << "] Start of request" << std::endl;
+	if (currentPlayers.size() < sw.GetPRIs().Count()) {
+		InitializeCurrentPlayers();
+		return;
+	}
 
-	// Define the callback function, capturing logFile by value
-	auto callback = [logFile](int code, std::string result) {
-		LOG("Body result{}", result);
-		*logFile << "[" << getCurrentTime() << "] Response: " << result << std::endl;
-	};
+	for (PlayerDetails& player : currentPlayers) {
+		std::string ipAddress = cvarManager->getCvar("SmurfTracker_ip").getStringValue();
+		std::string url = "http://" + ipAddress + ":8191/v1";
+		std::string platform = player.platform;
+		std::string playerName = player.playerName;
+		std::string targetUrl = "https://rlstats.net/profile/" + platform + "/" + urlEncode(playerName);
 
-	// Send the request using BakkesMod's HttpWrapper
-	LOG("sending body request");
-	HttpWrapper::SendCurlRequest(req, callback);
+		// Create the JSON data for the POST request
+		nlohmann::json data;
+		data["cmd"] = "request.get";
+		data["url"] = targetUrl;
+		data["maxTimeout"] = 60000;
 
-	*logFile << "[" << getCurrentTime() << "] End of request" << std::endl;
+		LOG("Sending stats request to " + url);
+
+		// non async curl request:
+		CurlRequest req;
+		req.url = url;
+		req.body = data.dump(); // Convert JSON data to string
+		req.headers["Content-Type"] = "application/json";
+
+		// Variable to store the result
+		std::string result;
+
+		// Define the callback function, capturing `this` to access class members
+		auto callback = [this, &player](int code, std::string response) {
+			if (code == 200) { // Check if the request was successful
+				try {
+					auto response_data = nlohmann::json::parse(response);
+					std::string wins = response_data["wins"];
+
+					//std::ofstream logFile("SmurfTracker.log", std::ios::app);
+					//logFile << "\n[" << getCurrentTime() << "] " << html_content << std::endl;
+
+					LOG("Currently assigned value: " + player.wins);
+					LOG("New assigned value: " + wins);
+					player.wins = wins;
+				}
+				catch (const nlohmann::json::exception& e) {
+					LOG(std::string("JSON parsing error: ") + e.what());
+					player.wins = "Error";
+				}
+			}
+			else {
+				LOG("Request failed with code: " + std::to_string(code));
+				player.wins = "Error: " + std::to_string(code);
+			}
+			};
+
+		// Send the request using BakkesMod's HttpWrapper
+		HttpWrapper::SendCurlRequest(req, callback);
+	}
 }
 
 void SmurfTracker::Render(CanvasWrapper canvas)
@@ -337,8 +370,8 @@ void SmurfTracker::Render(CanvasWrapper canvas)
 	int currentMode = cvarManager->getCvar("SmurfTracker_mode").getIntValue();
 	const char* items[] = { "Test", "MMR", "Wins" }; // Modes
 
-	if (currentMode == 0 || currentMode==2) {
-		// if mode is test or wins, display the scoreboard
+	if (currentMode == 0) {
+		// if mode is test, display the scoreboard
 		// Get the screen size
 		int screenWidth = canvas.GetSize().X;
 		int screenHeight = canvas.GetSize().Y;
@@ -479,6 +512,88 @@ void SmurfTracker::Render(CanvasWrapper canvas)
 			scoreboardPosition.Y += verticalOffset;
 		}
 	}
+
+	if (currentMode == 2) {
+		// if mode is wins, display the wins of each player
+		// Get the screen size
+		int screenWidth = canvas.GetSize().X;
+		int screenHeight = canvas.GetSize().Y;
+
+		// Calculate the position next to the scoreboard
+		Vector2 scoreboardPosition(screenWidth - screenWidth / 4, screenHeight / 2 - screenHeight / 10);
+
+		std::string TextToDisplay = "Connected Players:" + std::to_string(currentPlayers.size()) + " Mode: " + items[currentMode];
+
+		LinearColor white;
+		white.R = 255;
+		white.G = 255;
+		white.B = 255;
+		white.A = 255;
+		canvas.SetColor(white);
+		canvas.SetPosition(scoreboardPosition);
+		canvas.DrawString(TextToDisplay);
+
+		// Initialize vertical offset for player names
+		int verticalOffset = 20;
+
+		// Update the vertical position for the next line
+		scoreboardPosition.Y += verticalOffset;
+
+		// Draw Blue Team
+		LinearColor blue;
+		blue.R = 0;
+		blue.G = 0;
+		blue.B = 255;
+		blue.A = 255;
+		canvas.SetColor(blue);
+		canvas.SetPosition(scoreboardPosition);
+		canvas.DrawString("Blue:");
+
+		// Update the vertical position for the next line
+		scoreboardPosition.Y += verticalOffset;
+		canvas.SetColor(white);
+
+		for (const auto& playerName : blueTeam) {
+			std::string displayString;
+			for (const auto& playerDetails : currentPlayers) {
+				if (playerName == playerDetails.playerName) {
+					displayString = playerDetails.playerName + " - Wins: " + playerDetails.wins;
+					break; // Found the player, no need to continue the inner loop
+				}
+			}
+			canvas.SetPosition(scoreboardPosition);
+			canvas.DrawString(displayString.empty() ? playerName : displayString);
+			scoreboardPosition.Y += verticalOffset;
+		}
+
+
+		// Draw Orange Team
+		LinearColor orange;
+		orange.R = 255;
+		orange.G = 165;
+		orange.B = 0;
+		orange.A = 255;
+		canvas.SetColor(orange);
+		canvas.SetPosition(scoreboardPosition);
+		canvas.DrawString("Orange:");
+
+		// Update the vertical position for the next line
+		scoreboardPosition.Y += verticalOffset;
+		canvas.SetColor(white);
+
+		for (const auto& playerName : orangeTeam) {
+			std::string displayString;
+			for (const auto& playerDetails : currentPlayers) {
+				if (playerName == playerDetails.playerName) {
+					displayString = playerDetails.playerName + " - Wins: " + playerDetails.wins;
+					break; // Found the player, no need to continue the inner loop
+				}
+			}
+			canvas.SetPosition(scoreboardPosition);
+			canvas.DrawString(displayString.empty() ? playerName : displayString);
+			scoreboardPosition.Y += verticalOffset;
+		}
+	}
 }
 
 void SmurfTracker::DisplayPlayerIDs()
@@ -553,7 +668,7 @@ void SmurfTracker::DisplayPlayerIDs()
 			}
 		}
 
-		HTTPRequest("https://jsonplaceholder.typicode.com/users");
+		// HTTPRequest("https://jsonplaceholder.typicode.com/users");
 	}
 
 	// Close the log file

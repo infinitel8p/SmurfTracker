@@ -16,8 +16,8 @@ struct PlayerDetails {
 	std::string playerName;
 	std::string platform;
 	std::string uniqueID;
+	std::string wins = "0";
 	int playerIndex = 0;
-	int wins = 0;
 	int currentScore = 0;
 	int team;
 };
@@ -32,7 +32,7 @@ class SmurfTracker : public BakkesMod::Plugin::BakkesModPlugin
 	void onUnload() override;
 
 	void DisplayPlayerIDs();
-	void HTTPRequest(const std::string& url);
+    void HTTPRequest();
 	void Render(CanvasWrapper canvas);
 	void InitializeCurrentPlayers();
 	void ClearCurrentPlayers();
@@ -42,7 +42,8 @@ class SmurfTracker : public BakkesMod::Plugin::BakkesModPlugin
 
 	bool isSBOpen;
 	bool smurfTrackerEnabled;
-	int currentItem; // displayed mode chosen by combo box
+	int selectedMode; // displayed mode chosen by combo box
+	std::string ipAddress; // IP address of endpoint
 	std::vector<PlayerDetails> currentPlayers;
 	std::ofstream logFile;
 	std::vector<std::string> blueTeam;

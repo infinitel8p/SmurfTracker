@@ -84,6 +84,12 @@
     <ClCompile Include="SmurfTrackerSettings.cpp">
       <Filter>Plugin\src</Filter>
     </ClCompile>
+    <ClCompile Include="pugixml.cpp">
+      <Filter>Plugin\src</Filter>
+    </ClCompile>
+    <ClCompile Include="url_encode.cpp">
+      <Filter>Plugin\src</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="imgui\imgui_rangeslider.h">
@@ -141,6 +147,9 @@
       <Filter>Plugin\header</Filter>
     </ClInclude>
     <ClInclude Include="GuiBase.h">
+      <Filter>Plugin\header</Filter>
+    </ClInclude>
+    <ClInclude Include="url_encode.h">
       <Filter>Plugin\header</Filter>
     </ClInclude>
   </ItemGroup>
