@@ -2,28 +2,7 @@
 #include "SmurfTracker.h"
 
 void SmurfTracker::RenderSettings() {
-    ImGui::TextUnformatted("A really cool plugin");
-
-
-    // Check Function Button
-    if (ImGui::Button("Check Function")) {
-        gameWrapper->Execute([this](GameWrapper* gw) {
-            cvarManager->executeCommand("DisplayPlayerIDs");
-            });
-    }
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Test");
-    }
-
-    // Check HTTP Request Button
-    if (ImGui::Button("Check HTTP Request")) {
-        gameWrapper->Execute([this](GameWrapper* gw) {
-            cvarManager->executeCommand("TestHTTPRequest");
-            });
-    }
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Send a HTTP Request to jsonplaceholder.typicode.com/posts and log results");
-    }
+    ImGui::TextUnformatted("General Settings");
 
     // Enable Render Checkbox
     CVarWrapper enableCvar = cvarManager->getCvar("SmurfTracker_enabled");
@@ -39,14 +18,17 @@ void SmurfTracker::RenderSettings() {
     // Mode Combo Box
     CVarWrapper modeCvar = cvarManager->getCvar("SmurfTracker_mode");
     if (!modeCvar) { return; } 
-    static int selectedMode = 0;  // Index of the currently selected item, static to keep its state
-    const char* items[] = { "Test", "MMR", "Wins" }; // Modes
+    int selectedMode = modeCvar.getIntValue();
+    const char* items[] = { "Score", "MMR", "Wins" }; // Modes
     if (ImGui::Combo("Mode", &selectedMode, items, IM_ARRAYSIZE(items))) {
         modeCvar.setValue(selectedMode);
     }
     if (ImGui::IsItemHovered()) { 
         ImGui::SetTooltip("Select the mode to display"); 
     }
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("Wins mode settings:");
 
     // IP address input of endpoint
     CVarWrapper ipCvar = cvarManager->getCvar("SmurfTracker_ip");
@@ -62,4 +44,26 @@ void SmurfTracker::RenderSettings() {
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("Set the IP address of the SmurfTracker endpoint");
     }
+
+    ImGui::TextUnformatted("Does not work yet:");
+    CVarWrapper checkTeammatesCvar = cvarManager->getCvar("SmurfTracker_check_teammates");
+    if (!checkTeammatesCvar) { return; }
+    bool checkTeammates = checkTeammatesCvar.getBoolValue();
+    if (ImGui::Checkbox("Check teammates", &checkTeammates)) {
+        checkTeammatesCvar.setValue(checkTeammates);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Disable checking teammates stats to reduce API calls");
+    }
+
+    CVarWrapper checkSelfCvar = cvarManager->getCvar("SmurfTracker_check_self");
+    if (!checkSelfCvar) { return; }
+    bool checkSelf = checkSelfCvar.getBoolValue();
+    if (ImGui::Checkbox("Check yourself", &checkSelf)) {
+        checkSelfCvar.setValue(checkSelf);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Disable checking your own stats to reduce API calls");
+    }
+    ImGui::Separator();
 }

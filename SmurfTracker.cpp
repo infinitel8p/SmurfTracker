@@ -57,9 +57,15 @@ void SmurfTracker::onLoad()
 		ipAddress = cvar.getStringValue();
 	});
 
-	cvarManager->registerNotifier("DisplayPlayerIDs", [this](std::vector<std::string> args) {
-		DisplayPlayerIDs();
-		}, "", PERMISSION_ALL);
+	cvarManager->registerCvar("SmurfTracker_check_teammates", "1", "Check teammates stats", true, true, 0, true, 1)
+		.addOnValueChanged([this](std::string oldValue, CVarWrapper cvar) {
+		checkTeammates = cvar.getBoolValue();
+	});
+
+	cvarManager->registerCvar("SmurfTracker_check_self", "1", "Check your own stats", true, true, 0, true, 1)
+		.addOnValueChanged([this](std::string oldValue, CVarWrapper cvar) {
+		checkSelf = cvar.getBoolValue();
+	});
 
 	cvarManager->registerNotifier("InitializeCurrentPlayers", [this](std::vector<std::string> args) {
 		InitializeCurrentPlayers();
@@ -70,14 +76,18 @@ void SmurfTracker::onLoad()
 		}, "", PERMISSION_ALL);
 
 	// Hook into the OnAllTeamsCreated event to log when all teams are created	
-	gameWrapper->HookEvent("Function TAGame.GameEvent_Soccar_TA.OnAllTeamsCreated", [this](std::string eventName) {
+	//gameWrapper->HookEvent("Function TAGame.GameEvent_Soccar_TA.OnAllTeamsCreated", [this](std::string eventName) {
+	//	LOG("Initialize Game Session");
+	//	cvarManager->executeCommand("InitializeCurrentPlayers");
+	//	});
+
+	gameWrapper->HookEvent("Function TAGame.Team_TA.PostBeginPlay", [this](std::string eventName) {
 		LOG("Initialize Game Session");
 		cvarManager->executeCommand("InitializeCurrentPlayers");
 		});
 
 	// Hook into the OnOpenScoreboard event to display player IDs when the scoreboard is opened
 	gameWrapper->HookEvent("Function TAGame.GFxData_GameEvent_TA.OnOpenScoreboard", [this](std::string eventName) {
-		//cvarManager->executeCommand("DisplayPlayerIDs");
 		isSBOpen = true;
 		UpdatePlayerList();
 		});
@@ -143,10 +153,11 @@ void SmurfTracker::InitializeCurrentPlayers()
 		// Extract player information
 		PlayerDetails details;
 		details.playerName = playerWrapper.GetPlayerName().ToString();
-		details.uniqueID = uniqueIDString;
+		details.uniqueID = uniqueIDString; // Unique ID format: Platform|UniqueID|PlayerIndex
 		details.playerIndex = static_cast<int>(i);  // Assuming i is the player index
-		details.team = playerWrapper.GetTeamNum();  // 0 is blue, 1 is orange
-		details.wins = "Searching...";
+		details.team = playerWrapper.GetTeamNum();  // 0 is blue, 1 is orange 11
+		details.mmr = std::to_string(static_cast<int>(std::round(gameWrapper->GetMMRWrapper().GetPlayerMMR(playerWrapper.GetUniqueIdWrapper(), 11))));// 11 is playlist ID for ranked 2v2
+		details.wins = "Waiting..."; // Default value	
 
 		// Find separators
 		size_t firstSeparator = uniqueIDString.find('|');
@@ -185,8 +196,12 @@ void SmurfTracker::InitializeCurrentPlayers()
 		currentPlayers.push_back(details);
 	}
 
-	HTTPRequest();
 	UpdateTeamStrings();
+
+	int currentMode = cvarManager->getCvar("SmurfTracker_mode").getIntValue();
+	if (currentMode == 2) {
+		HTTPRequest();
+	}
 }
 
 void SmurfTracker::ClearCurrentPlayers()
@@ -302,377 +317,168 @@ void SmurfTracker::HTTPRequest()
 		return;
 	}
 
-	for (PlayerDetails& player : currentPlayers) {
-		std::string ipAddress = cvarManager->getCvar("SmurfTracker_ip").getStringValue();
-		std::string url = "http://" + ipAddress + ":8191/v1";
-		std::string platform = player.platform;
-		std::string playerName = player.playerName;
-		std::string targetUrl = "https://rlstats.net/profile/" + platform + "/" + urlEncode(playerName);
+	auto processPlayer = std::make_shared<std::function<void(std::shared_ptr<std::set<std::string>>)>>();
 
-		// Create the JSON data for the POST request
-		nlohmann::json data;
-		data["cmd"] = "request.get";
-		data["url"] = targetUrl;
-		data["maxTimeout"] = 60000;
-
-		LOG("Sending stats request to " + url);
-
-		// non async curl request:
-		CurlRequest req;
-		req.url = url;
-		req.body = data.dump(); // Convert JSON data to string
-		req.headers["Content-Type"] = "application/json";
-
-		// Variable to store the result
-		std::string result;
-
-		// Define the callback function, capturing `this` to access class members
-		auto callback = [this, &player](int code, std::string response) {
-			if (code == 200) { // Check if the request was successful
-				try {
-					auto response_data = nlohmann::json::parse(response);
-					std::string wins = response_data["wins"];
-
-					//std::ofstream logFile("SmurfTracker.log", std::ios::app);
-					//logFile << "\n[" << getCurrentTime() << "] " << html_content << std::endl;
-
-					LOG("Currently assigned value: " + player.wins);
-					LOG("New assigned value: " + wins);
-					player.wins = wins;
-				}
-				catch (const nlohmann::json::exception& e) {
-					LOG(std::string("JSON parsing error: ") + e.what());
-					player.wins = "Error";
-				}
+	*processPlayer = [this, processPlayer](std::shared_ptr<std::set<std::string>> processedPlayers) {
+		for (auto& player : currentPlayers) {
+			if (processedPlayers->count(player.playerName)) {
+				continue; // Skip already processed players
 			}
-			else {
-				LOG("Request failed with code: " + std::to_string(code));
-				player.wins = "Error: " + std::to_string(code);
+			if (player.requested) {
+				continue; // Skip players that have already been requested
 			}
-			};
 
-		// Send the request using BakkesMod's HttpWrapper
-		HttpWrapper::SendCurlRequest(req, callback);
-	}
+			processedPlayers->insert(player.playerName);
+			player.requested = true;
+
+			std::string ipAddress = cvarManager->getCvar("SmurfTracker_ip").getStringValue();
+			std::string url = "http://" + ipAddress + ":8191/v1";
+			std::string platform = player.platform == "XboxOne" ? "Xbox" : player.platform;
+			std::string playerName = player.playerName;
+			std::string targetUrl = "https://rlstats.net/profile/" + platform + "/" + urlEncode(playerName);
+			player.wins = "Searching...";
+			LOG("Requesting stats for: " + playerName);
+
+			nlohmann::json data;
+			data["cmd"] = "request.get";
+			data["url"] = targetUrl;
+			data["maxTimeout"] = 60000;
+
+			LOG(getCurrentTime() + " Sending stats request: " + targetUrl);
+
+			CurlRequest req;
+			req.url = url;
+			req.body = data.dump();
+			req.headers["Content-Type"] = "application/json";
+
+			auto weakProcessPlayer = std::weak_ptr<std::function<void(std::shared_ptr<std::set<std::string>>)>>
+				(processPlayer);
+
+			HttpWrapper::SendCurlRequest(req, [this, weakProcessPlayer, processedPlayers, playerName](int code, std::string response) {
+				if (auto processPlayer = weakProcessPlayer.lock()) {
+					if (code == 200) {
+						try {
+							auto response_data = nlohmann::json::parse(response);
+							std::string wins = response_data["wins"];
+							for (auto& p : currentPlayers) {
+								if (p.playerName == playerName) {
+									p.wins = wins;
+									LOG(playerName + " - Wins: " + wins);
+									break;
+								}
+							}
+						}
+						catch (const nlohmann::json::exception& e) {
+							LOG(std::string("JSON parsing error: ") + e.what());
+							for (auto& p : currentPlayers) {
+								if (p.playerName == playerName) {
+									p.wins = "Error";
+									break;
+								}
+							}
+						}
+					}
+					else {
+						LOG("Request failed with code: " + std::to_string(code));
+						for (auto& p : currentPlayers) {
+							if (p.playerName == playerName) {
+								p.wins = "Error: " + std::to_string(code);
+								break;
+							}
+						}
+					}
+
+					gameWrapper->SetTimeout([processPlayer, processedPlayers](...) {
+						(*processPlayer)(processedPlayers);
+						}, 1.0f);
+				}
+				});
+
+			break; // Exit after sending the request for the first player found
+		}
+		};
+
+	auto processedPlayers = std::make_shared<std::set<std::string>>();
+	(*processPlayer)(processedPlayers);
 }
 
 void SmurfTracker::Render(CanvasWrapper canvas)
 {
-	if (!smurfTrackerEnabled || !isSBOpen) {
-		return;
-	}
-
-	if (!gameWrapper->IsInOnlineGame() && !gameWrapper->IsInFreeplay() || gameWrapper->IsInReplay()) {
+	if (!smurfTrackerEnabled || !isSBOpen || (!gameWrapper->IsInOnlineGame() && !gameWrapper->IsInFreeplay()) || gameWrapper->IsInReplay()) {
 		return;
 	}
 
 	// selected mode to display
 	int currentMode = cvarManager->getCvar("SmurfTracker_mode").getIntValue();
-	const char* items[] = { "Test", "MMR", "Wins" }; // Modes
+	const char* items[] = { "Score", "MMR", "Wins" }; // Modes
+	LinearColor white{ 255, 255, 255, 255 };
+	LinearColor blue{ 0, 0, 255, 255 };
+	LinearColor orange{ 255, 165, 0, 255 };
 
-	if (currentMode == 0) {
-		// if mode is test, display the scoreboard
-		// Get the screen size
-		int screenWidth = canvas.GetSize().X;
-		int screenHeight = canvas.GetSize().Y;
+	int bluePos[3] = { 380, 429, 478 };
+	int orangePos[3] = { 615, 663, 710 };
 
-		// Calculate the position next to the scoreboard
-		Vector2 scoreboardPosition(screenWidth - screenWidth / 4, screenHeight / 2 - screenHeight / 10);
+	if (currentPlayers.size() <= 2) {
+		bluePos[0] = 488;
+		orangePos[0] = 615;
+	}
+	if (currentPlayers.size() <= 4 && currentPlayers.size() > 2) {
+		bluePos[0] = 435;
+		bluePos[1] = 483;
+		orangePos[0] = 615;
+		orangePos[1] = 663;
+	}
+	if (currentPlayers.size() > 4) {
+		bluePos[0] = 380;
+		bluePos[1] = 429;
+		bluePos[2] = 478;
+		orangePos[0] = 615;
+		orangePos[1] = 663;
+		orangePos[2] = 710;
+	}
 
-		std::string TextToDisplay = "Connected Players:" + std::to_string(currentPlayers.size()) + " Mode: " + items[currentMode];
+	// Map for quick lookup of player details by name
+	std::unordered_map<std::string, PlayerDetails> playerDetailsMap;
+	for (const auto& player : currentPlayers) {
+		playerDetailsMap[player.playerName] = player;
+	}
 
-		LinearColor white;
-		white.R = 255;
-		white.G = 255;
-		white.B = 255;
-		white.A = 255;
+	// Display header information
+	canvas.SetColor(white);
+	canvas.SetPosition(Vector2(1440, 0));
+	canvas.DrawString("Connected Players: " + std::to_string(currentPlayers.size()) + " Mode: " + items[currentMode], 2.0, 2.0, true, true);
+
+	auto drawTeam = [&](const std::vector<std::string>& team, const LinearColor& color, int* positions) {
+		canvas.SetColor(color);
+		std::string teamName = (color == blue) ? "Blue:" : "Orange:";
+		canvas.SetPosition(Vector2(1440, positions[0] - 50));
+		canvas.DrawString(teamName, 1.5, 1.5, true);
+
 		canvas.SetColor(white);
-		canvas.SetPosition(scoreboardPosition);
-		canvas.DrawString(TextToDisplay);
-
-		// Initialize vertical offset for player names
-		int verticalOffset = 20;
-
-		// Update the vertical position for the next line
-		scoreboardPosition.Y += verticalOffset;
-
-		// Draw Blue Team
-		LinearColor blue;
-		blue.R = 0;
-		blue.G = 0;
-		blue.B = 255;
-		blue.A = 255;
-		canvas.SetColor(blue);
-		canvas.SetPosition(scoreboardPosition);
-		canvas.DrawString("Blue:");
-
-		// Update the vertical position for the next line
-		scoreboardPosition.Y += verticalOffset;
-		canvas.SetColor(white);
-
-		for (const auto& player : blueTeam) {
-			for (const auto& players : currentPlayers) {
-				if (player == players.playerName) {
-					LOG("");
+		int index = 0;
+		for (const auto& player : team) {
+			auto it = playerDetailsMap.find(player);
+			if (it != playerDetailsMap.end()) {
+				const auto& playerDetails = it->second;
+				std::string displayString = player;
+				if (currentMode == 0) {
+					displayString += " - Score: " + std::to_string(playerDetails.currentScore);
 				}
-			}
-			canvas.SetPosition(scoreboardPosition);
-			canvas.DrawString(player);
-			scoreboardPosition.Y += verticalOffset;
-		}
-
-
-		// Draw Orange Team
-		LinearColor orange;
-		orange.R = 255;
-		orange.G = 165;
-		orange.B = 0;
-		orange.A = 255;
-		canvas.SetColor(orange);
-		canvas.SetPosition(scoreboardPosition);
-		canvas.DrawString("Orange:");
-
-		// Update the vertical position for the next line
-		scoreboardPosition.Y += verticalOffset;
-		canvas.SetColor(white);
-
-		for (const auto& player : orangeTeam) {
-			canvas.SetPosition(scoreboardPosition);
-			canvas.DrawString(player);
-			scoreboardPosition.Y += verticalOffset;
-		}
-	}
-
-	if (currentMode == 1) {
-		// if mode is MMR, display the MMR of each player
-		// Get the screen size
-		int screenWidth = canvas.GetSize().X;
-		int screenHeight = canvas.GetSize().Y;
-
-		// Calculate the position next to the scoreboard
-		Vector2 scoreboardPosition(screenWidth - screenWidth / 4, screenHeight / 2 - screenHeight / 10);
-
-		std::string TextToDisplay = "Connected Players:" + std::to_string(currentPlayers.size()) + " Mode: " + items[currentMode];
-
-		LinearColor white;
-		white.R = 255;
-		white.G = 255;
-		white.B = 255;
-		white.A = 255;
-		canvas.SetColor(white);
-		canvas.SetPosition(scoreboardPosition);
-		canvas.DrawString(TextToDisplay);
-
-		// Initialize vertical offset for player names
-		int verticalOffset = 20;
-
-		// Update the vertical position for the next line
-		scoreboardPosition.Y += verticalOffset;
-
-		// Draw Blue Team
-		LinearColor blue;
-		blue.R = 0;
-		blue.G = 0;
-		blue.B = 255;
-		blue.A = 255;
-		canvas.SetColor(blue);
-		canvas.SetPosition(scoreboardPosition);
-		canvas.DrawString("Blue:");
-
-		// Update the vertical position for the next line
-		scoreboardPosition.Y += verticalOffset;
-		canvas.SetColor(white);
-
-		// playlist id 11
-		for (const auto& player : blueTeam) {
-			std::string playerNameWithMMR = player;
-			canvas.SetPosition(scoreboardPosition);
-			canvas.DrawString(playerNameWithMMR);
-			scoreboardPosition.Y += verticalOffset;
-		}
-
-
-		// Draw Orange Team
-		LinearColor orange;
-		orange.R = 255;
-		orange.G = 165;
-		orange.B = 0;
-		orange.A = 255;
-		canvas.SetColor(orange);
-		canvas.SetPosition(scoreboardPosition);
-		canvas.DrawString("Orange:");
-
-		// Update the vertical position for the next line
-		scoreboardPosition.Y += verticalOffset;
-		canvas.SetColor(white);
-
-		for (const auto& player : orangeTeam) {
-			canvas.SetPosition(scoreboardPosition);
-			canvas.DrawString(player);
-			scoreboardPosition.Y += verticalOffset;
-		}
-	}
-
-	if (currentMode == 2) {
-		// if mode is wins, display the wins of each player
-		// Get the screen size
-		int screenWidth = canvas.GetSize().X;
-		int screenHeight = canvas.GetSize().Y;
-
-		// Calculate the position next to the scoreboard
-		Vector2 scoreboardPosition(screenWidth - screenWidth / 4, screenHeight / 2 - screenHeight / 10);
-
-		std::string TextToDisplay = "Connected Players:" + std::to_string(currentPlayers.size()) + " Mode: " + items[currentMode];
-
-		LinearColor white;
-		white.R = 255;
-		white.G = 255;
-		white.B = 255;
-		white.A = 255;
-		canvas.SetColor(white);
-		canvas.SetPosition(scoreboardPosition);
-		canvas.DrawString(TextToDisplay);
-
-		// Initialize vertical offset for player names
-		int verticalOffset = 20;
-
-		// Update the vertical position for the next line
-		scoreboardPosition.Y += verticalOffset;
-
-		// Draw Blue Team
-		LinearColor blue;
-		blue.R = 0;
-		blue.G = 0;
-		blue.B = 255;
-		blue.A = 255;
-		canvas.SetColor(blue);
-		canvas.SetPosition(scoreboardPosition);
-		canvas.DrawString("Blue:");
-
-		// Update the vertical position for the next line
-		scoreboardPosition.Y += verticalOffset;
-		canvas.SetColor(white);
-
-		for (const auto& playerName : blueTeam) {
-			std::string displayString;
-			for (const auto& playerDetails : currentPlayers) {
-				if (playerName == playerDetails.playerName) {
-					displayString = playerDetails.playerName + " - Wins: " + playerDetails.wins;
-					break; // Found the player, no need to continue the inner loop
+				else if (currentMode == 1) {
+					displayString += " - MMR: " + playerDetails.mmr;
 				}
-			}
-			canvas.SetPosition(scoreboardPosition);
-			canvas.DrawString(displayString.empty() ? playerName : displayString);
-			scoreboardPosition.Y += verticalOffset;
-		}
-
-
-		// Draw Orange Team
-		LinearColor orange;
-		orange.R = 255;
-		orange.G = 165;
-		orange.B = 0;
-		orange.A = 255;
-		canvas.SetColor(orange);
-		canvas.SetPosition(scoreboardPosition);
-		canvas.DrawString("Orange:");
-
-		// Update the vertical position for the next line
-		scoreboardPosition.Y += verticalOffset;
-		canvas.SetColor(white);
-
-		for (const auto& playerName : orangeTeam) {
-			std::string displayString;
-			for (const auto& playerDetails : currentPlayers) {
-				if (playerName == playerDetails.playerName) {
-					displayString = playerDetails.playerName + " - Wins: " + playerDetails.wins;
-					break; // Found the player, no need to continue the inner loop
+				else if (currentMode == 2) {
+					displayString += " - Wins: " + playerDetails.wins;
 				}
-			}
-			canvas.SetPosition(scoreboardPosition);
-			canvas.DrawString(displayString.empty() ? playerName : displayString);
-			scoreboardPosition.Y += verticalOffset;
-		}
-	}
-}
-
-void SmurfTracker::DisplayPlayerIDs()
-{
-	if (!smurfTrackerEnabled) {
-		LOG("Plugin not enabled!");
-		return;
-	}
-
-	if (!gameWrapper->IsInOnlineGame() && !gameWrapper->IsInFreeplay() || gameWrapper->IsInReplay()) {
-		LOG("Not in an online game or freeplay!");
-		return;
-	}
-
-	ServerWrapper sw = NULL;
-	if (gameWrapper->IsInFreeplay()) {
-		sw = gameWrapper->GetGameEventAsServer();
-	}
-	else {
-		sw = gameWrapper->GetOnlineGame();
-	}
-
-	if (sw.IsNull() || sw.GetbMatchEnded()) {
-		LOG("Invalid game state or match ended!");
-		return;
-	}
-
-	// Open the log file in append mode (Location is Epic Games\rocketleague\Binaries\Win64\SmurfTracker.log)
-	std::ofstream logFile("SmurfTracker.log", std::ios::app);
-
-	// Iterate through the currentPlayers vector to log or display the details
-	for (const auto& details : currentPlayers) {
-
-		// Log the details
-		std::string logMessage = "Player name: " + details.playerName +
-			" | Platform: " + details.platform +
-			" | ID: " + details.uniqueID +
-			" | PlayerIndex: " + std::to_string(details.playerIndex);
-		LOG(logMessage);
-		logFile << "\n[" << getCurrentTime() << "] " << logMessage << std::endl;
-
-		// Check the platform in the unique ID and log the appropriate request URL
-		if (details.uniqueID.find("Epic") != std::string::npos) {
-			LOG("Request: https://rocketleague.tracker.network/rocket-league/profile/epic/" + details.playerName);
-		}
-		else if (details.uniqueID.find("PS4") != std::string::npos) {
-			LOG("Request: https://rocketleague.tracker.network/rocket-league/profile/psn/" + details.playerName);
-		}
-		else if (details.uniqueID.find("Switch") != std::string::npos) {
-			LOG("Request: https://rocketleague.tracker.network/rocket-league/profile/switch/" + details.playerName);
-		}
-
-		// https://rocketleague.tracker.network/rocket-league/profile/steam/76561198138690072/overview ????-steam|uniqueID
-		// https://rocketleague.tracker.network/rocket-league/profile/xbl/RocketLeague893/overview ????-xbl|xbl-username
-		// https://rocketleague.tracker.network/rocket-league/profile/epic/test/overview Epic-epic|epic-username
-		// https://rocketleague.tracker.network/rocket-league/profile/psn/RocketLeagueNA/overview PS4-psn|psn-username
-		// https://rocketleague.tracker.network/rocket-league/profile/switch/test/overview Switch-switch|switch-usernamefpla
-		// uniqueID = Platform|Userid|Splitscreen/PlayerIndex
-
-		// TODO: Determine the position to draw the ID
-		// TODO: Use the correct method to draw the string on the canvas
-
-		std::vector<CareerStatsWrapper::StatValue> statValues = CareerStatsWrapper::GetStatValues();
-		for (const auto& statValue : statValues) {
-			if (statValue.stat_name == "Win") {
-				std::string logMessage = getCurrentTime() + " | Stat Name: " + statValue.stat_name +
-					" | Private: " + std::to_string(statValue.private_) +
-					" | Unranked: " + std::to_string(statValue.unranked) +
-					" | Ranked: " + std::to_string(statValue.ranked);
-				logFile << "\n[" << getCurrentTime() << "] " << logMessage << std::endl;
-				break; // Exit the loop once the "Win" stat is found
+				canvas.SetPosition(Vector2(1440, positions[index]));
+				canvas.DrawString(displayString, 1.5, 1.5, true);
+				index++;
 			}
 		}
+		};
 
-		// HTTPRequest("https://jsonplaceholder.typicode.com/users");
-	}
-
-	// Close the log file
-	logFile.close();
+	drawTeam(blueTeam, blue, bluePos);
+	drawTeam(orangeTeam, orange, orangePos);
 }
 
 void SmurfTracker::onUnload()
