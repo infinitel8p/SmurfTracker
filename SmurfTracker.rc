@@ -78,13 +78,13 @@ BEGIN
     BEGIN
         BLOCK "041404b0"
         BEGIN
-            VALUE "CompanyName", "TODO: <Company name>"
-            VALUE "FileDescription", "TODO: <File description>"
+            VALUE "CompanyName", "InfiniteL8p"
+            VALUE "FileDescription", "Find smurfs in you games"
             VALUE "FileVersion", stringify(VERSION_MAJOR) "." stringify(VERSION_MINOR) "." stringify(VERSION_PATCH) "." stringify(VERSION_BUILD)
             VALUE "InternalName", "SmurfTracker.dll"
             VALUE "LegalCopyright", "Copyright (C) 2020"
             VALUE "OriginalFilename", "SmurfTracker.dll"
-            VALUE "ProductName", "TODO: <Product name>"
+            VALUE "ProductName", "SmurfTracker"
             VALUE "ProductVersion", stringify(VERSION_MAJOR) "." stringify(VERSION_MINOR) "." stringify(VERSION_PATCH) "." stringify(VERSION_BUILD)
         END
     END
